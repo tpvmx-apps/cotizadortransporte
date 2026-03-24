@@ -447,6 +447,14 @@
               <input id="fechaCotizacion" type="date">
             </div>
             <div class="field">
+              <label for="fechaInicioServicio">Fecha de inicio del servicio</label>
+              <input id="fechaInicioServicio" type="date">
+            </div>
+            <div class="field">
+              <label for="fechaTerminoServicio">Fecha de termino del servicio</label>
+              <input id="fechaTerminoServicio" type="date">
+            </div>
+            <div class="field">
               <label for="tipoServicio">Tipo de servicio</label>
               <select id="tipoServicio">
                 <option value="Traslado sencillo (con retorno de unidad)">Traslado sencillo (con retorno de unidad)</option>
@@ -564,6 +572,9 @@
         <div class="mini-meta">
           <div class="mini-meta-row"><span>Cliente</span><strong id="metaCliente">Sin asignar</strong></div>
           <div class="mini-meta-row"><span>Fecha</span><strong id="metaFecha">-</strong></div>
+          <div class="mini-meta-row"><span>Inicio del servicio</span><strong id="metaInicioServicio">-</strong></div>
+          <div class="mini-meta-row"><span>Termino del servicio</span><strong id="metaTerminoServicio">-</strong></div>
+          <div class="mini-meta-row"><span>Duracion</span><strong id="metaDuracionServicio">-</strong></div>
           <div class="mini-meta-row"><span>Vehiculo</span><strong id="metaVehiculo">Toyota Hiace 11 pasajeros</strong></div>
           <div class="mini-meta-row"><span>Servicio</span><strong id="metaServicio">Traslado sencillo (con retorno de unidad)</strong></div>
         </div>
@@ -627,6 +638,9 @@
         <div class="print-grid">
           <div class="print-item"><span>Origen</span><strong id="printOrigen">-</strong></div>
           <div class="print-item"><span>Destino final</span><strong id="printDestino">-</strong></div>
+          <div class="print-item"><span>Inicio del servicio</span><strong id="printInicioServicio">-</strong></div>
+          <div class="print-item"><span>Termino del servicio</span><strong id="printTerminoServicio">-</strong></div>
+          <div class="print-item"><span>Duracion</span><strong id="printDuracionServicio">-</strong></div>
           <div class="print-item"><span>Tipo de servicio</span><strong id="printServicio">-</strong></div>
           <div class="print-item"><span>Vehiculo</span><strong id="printVehiculo">-</strong></div>
           <div class="print-item"><span>Distancia total estimada</span><strong id="printDistanciaTotal">0.0 km</strong></div>
@@ -656,6 +670,8 @@
       cotizaNombre: $("#cotizaNombre"),
       clienteNombre: $("#clienteNombre"),
       fechaCotizacion: $("#fechaCotizacion"),
+      fechaInicioServicio: $("#fechaInicioServicio"),
+      fechaTerminoServicio: $("#fechaTerminoServicio"),
       origen: $("#origen"),
       destino: $("#destino"),
       escalasContainer: $("#escalasContainer"),
@@ -680,6 +696,9 @@
       status: $("#status"),
       metaCliente: $("#metaCliente"),
       metaFecha: $("#metaFecha"),
+      metaInicioServicio: $("#metaInicioServicio"),
+      metaTerminoServicio: $("#metaTerminoServicio"),
+      metaDuracionServicio: $("#metaDuracionServicio"),
       metaVehiculo: $("#metaVehiculo"),
       metaServicio: $("#metaServicio"),
       costoTotalViajeCard: $("#costoTotalViajeCard"),
@@ -712,6 +731,9 @@
       cliente: $("#printCliente"),
       origen: $("#printOrigen"),
       destino: $("#printDestino"),
+      inicioServicio: $("#printInicioServicio"),
+      terminoServicio: $("#printTerminoServicio"),
+      duracionServicio: $("#printDuracionServicio"),
       servicio: $("#printServicio"),
       vehiculo: $("#printVehiculo"),
       distanciaTotal: $("#printDistanciaTotal"),
@@ -746,6 +768,22 @@
 
     function todayAsInputValue() {
       return new Date().toISOString().slice(0, 10);
+    }
+
+    function parseDateValue(value) {
+      return value ? new Date(`${value}T00:00:00`) : null;
+    }
+
+    function getServiceDurationLabel(startDate, endDate) {
+      if (!startDate || !endDate) {
+        return "-";
+      }
+
+      if (startDate === endDate) {
+        return "Servicio de un solo dia";
+      }
+
+      return "Servicio de varios dias";
     }
 
     function formatMoney(amount) {
@@ -840,6 +878,8 @@
         quotedBy: elements.cotizaNombre.value.trim(),
         quotedFor: elements.clienteNombre.value.trim(),
         quoteDate: elements.fechaCotizacion.value,
+        serviceStartDate: elements.fechaInicioServicio.value,
+        serviceEndDate: elements.fechaTerminoServicio.value,
         origin: elements.origen.value.trim(),
         scales: getScaleValues(),
         destination: elements.destino.value.trim(),
@@ -862,6 +902,9 @@
     function updateMetaSummary(form) {
       elements.metaCliente.textContent = form.quotedFor || "Sin asignar";
       elements.metaFecha.textContent = form.quoteDate || "-";
+      elements.metaInicioServicio.textContent = form.serviceStartDate || "-";
+      elements.metaTerminoServicio.textContent = form.serviceEndDate || "-";
+      elements.metaDuracionServicio.textContent = getServiceDurationLabel(form.serviceStartDate, form.serviceEndDate);
       elements.metaVehiculo.textContent = form.vehicle;
       elements.metaServicio.textContent = form.serviceType;
     }
@@ -872,6 +915,9 @@
       printOutputs.cliente.textContent = form.quotedFor || "-";
       printOutputs.origen.textContent = form.origin || "-";
       printOutputs.destino.textContent = form.destination || "-";
+      printOutputs.inicioServicio.textContent = form.serviceStartDate || "-";
+      printOutputs.terminoServicio.textContent = form.serviceEndDate || "-";
+      printOutputs.duracionServicio.textContent = getServiceDurationLabel(form.serviceStartDate, form.serviceEndDate);
       printOutputs.servicio.textContent = form.serviceType || "-";
       printOutputs.vehiculo.textContent = form.vehicle || "-";
       printOutputs.observaciones.textContent = form.observations || "Sin observaciones.";
@@ -883,6 +929,19 @@
 
       if (!form.origin || !form.destination) {
         errors.push("Ingresa un origen y un destino para calcular la ruta.");
+      }
+
+      if (!form.serviceStartDate || !form.serviceEndDate) {
+        errors.push("Captura la fecha de inicio y la fecha de termino del servicio.");
+      }
+
+      if (form.serviceStartDate && form.serviceEndDate) {
+        const startDate = parseDateValue(form.serviceStartDate);
+        const endDate = parseDateValue(form.serviceEndDate);
+
+        if (endDate < startDate) {
+          errors.push("La fecha de termino del servicio no puede ser anterior a la fecha de inicio.");
+        }
       }
 
       if (form.scales.some((scale) => !scale)) {
@@ -1245,6 +1304,8 @@
       elements.cotizaNombre.value = "";
       elements.clienteNombre.value = "";
       elements.fechaCotizacion.value = todayAsInputValue();
+      elements.fechaInicioServicio.value = todayAsInputValue();
+      elements.fechaTerminoServicio.value = todayAsInputValue();
       elements.origen.value = "";
       elements.destino.value = "";
       elements.escalasContainer.innerHTML = "";
@@ -1318,6 +1379,8 @@
       elements.cotizaNombre,
       elements.clienteNombre,
       elements.fechaCotizacion,
+      elements.fechaInicioServicio,
+      elements.fechaTerminoServicio,
       elements.origen,
       elements.destino,
       elements.tipoServicio,
@@ -1341,6 +1404,8 @@
     window.addEventListener("beforeprint", prepareForPrint);
 
     elements.fechaCotizacion.value = todayAsInputValue();
+    elements.fechaInicioServicio.value = todayAsInputValue();
+    elements.fechaTerminoServicio.value = todayAsInputValue();
     toggleHospedajeField(1);
     renderNotes([
       "Esta cotizacion incluye el retorno operativo de la unidad.",
