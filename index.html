@@ -138,7 +138,7 @@
       font-weight: 700;
     }
 
-    input, select, textarea {
+    input:not([type="checkbox"]), select, textarea {
       width: 100%;
       border: 1px solid var(--line);
       border-radius: 12px;
@@ -149,11 +149,32 @@
       transition: border-color 0.2s ease, box-shadow 0.2s ease, transform 0.15s ease;
     }
 
-    input:focus, select:focus, textarea:focus {
+    input:not([type="checkbox"]):focus, select:focus, textarea:focus {
       outline: none;
       border-color: var(--brand);
       box-shadow: 0 0 0 4px rgba(15, 118, 110, 0.12);
       transform: translateY(-1px);
+    }
+
+    input[readonly] {
+      background: #f4f1ea;
+      color: var(--muted);
+    }
+
+    .checkbox-field {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-top: 8px;
+      font-size: 0.93rem;
+      color: var(--ink);
+    }
+
+    .checkbox-field input[type="checkbox"] {
+      width: 18px;
+      height: 18px;
+      accent-color: var(--brand);
+      margin: 0;
     }
 
     .field-hint {
@@ -501,7 +522,7 @@
             </div>
             <div class="field">
               <label for="rendimiento">Rendimiento km por litro</label>
-              <input id="rendimiento" type="number" min="0.1" step="0.1" value="8">
+              <input id="rendimiento" type="number" min="0.1" step="0.1" value="6">
             </div>
             <div class="field">
               <label for="peajes">Peajes por trayecto (MXN)</label>
@@ -533,7 +554,15 @@
             </div>
             <div class="field">
               <label for="diasFuera">Cantidad de dias fuera de la unidad</label>
-              <input id="diasFuera" type="number" min="1" step="1" value="1">
+              <input id="diasFuera" type="number" min="1" step="1" value="1" readonly>
+              <label class="checkbox-field" for="ajustarDiasManual">
+                <input id="ajustarDiasManual" type="checkbox">
+                <span>Ajustar dias manualmente</span>
+              </label>
+            </div>
+            <div class="field">
+              <label for="costoUnidadDiario">Costo fijo diario de la unidad (MXN)</label>
+              <input id="costoUnidadDiario" type="number" min="0" step="0.01" value="0">
             </div>
             <div class="field">
               <label for="horaSalida">Hora de salida</label>
@@ -596,12 +625,13 @@
           <div class="detail-row"><dt>Distancia operativa (ida y vuelta)</dt><dd id="distanciaOperativaResultado">0.0 km</dd></div>
           <div class="detail-row"><dt>Ajuste operativo</dt><dd id="ajusteOperativoResultado">50.0 km</dd></div>
           <div class="detail-row"><dt>Distancia total final utilizada</dt><dd id="distanciaTotalResultado">50.0 km</dd></div>
-          <div class="detail-row"><dt>Tiempo estimado</dt><dd id="tiempoEstimadoResultado">0 min</dd></div>
+          <div class="detail-row"><dt>Tiempo estimado de ida</dt><dd id="tiempoEstimadoResultado">0 min</dd></div>
           <div class="detail-row"><dt>Costo de gasolina</dt><dd id="gasolinaResultado">$0.00 MXN</dd></div>
           <div class="detail-row"><dt>Peajes totales</dt><dd id="peajesResultado">$0.00 MXN</dd></div>
-          <div class="detail-row"><dt>Sueldo base del operador</dt><dd id="sueldoBaseResultado">$0.00 MXN</dd></div>
           <div class="detail-row"><dt>Cantidad de dias fuera</dt><dd id="diasFueraResultado">0</dd></div>
           <div class="detail-row"><dt>Costo total del operador</dt><dd id="costoOperadorResultado">$0.00 MXN</dd></div>
+          <div class="detail-row"><dt>Costo fijo diario de la unidad</dt><dd id="costoUnidadDiarioResultado">$0.00 MXN</dd></div>
+          <div class="detail-row"><dt>Costo por unidad fuera</dt><dd id="costoUnidadFueraResultado">$0.00 MXN</dd></div>
           <div class="detail-row"><dt>Recargo por conduccion nocturna</dt><dd id="recargoNocturnoResultado">$0.00 MXN</dd></div>
           <div class="detail-row"><dt>Otros gastos</dt><dd id="otrosGastosResultado">$0.00 MXN</dd></div>
           <div class="detail-row"><dt>Hospedaje</dt><dd id="hospedajeResultado">$0.00 MXN</dd></div>
@@ -687,6 +717,8 @@
       margen: $("#margen"),
       sueldoOperador: $("#sueldoOperador"),
       diasFuera: $("#diasFuera"),
+      ajustarDiasManual: $("#ajustarDiasManual"),
+      costoUnidadDiario: $("#costoUnidadDiario"),
       horaSalida: $("#horaSalida"),
       horaRegreso: $("#horaRegreso"),
       hospedajeField: $("#hospedajeField"),
@@ -718,9 +750,10 @@
       tiempoEstimado: $("#tiempoEstimadoResultado"),
       gasolina: $("#gasolinaResultado"),
       peajes: $("#peajesResultado"),
-      sueldoBase: $("#sueldoBaseResultado"),
       diasFuera: $("#diasFueraResultado"),
       costoOperador: $("#costoOperadorResultado"),
+      costoUnidadDiario: $("#costoUnidadDiarioResultado"),
+      costoUnidadFuera: $("#costoUnidadFueraResultado"),
       recargoNocturno: $("#recargoNocturnoResultado"),
       otrosGastos: $("#otrosGastosResultado"),
       hospedaje: $("#hospedajeResultado"),
@@ -790,6 +823,38 @@
       return "Servicio de varios dias";
     }
 
+    function calculateDaysOutside(startDate, endDate) {
+      if (!startDate || !endDate) {
+        return null;
+      }
+
+      const start = parseDateValue(startDate);
+      const end = parseDateValue(endDate);
+
+      if (!start || !end || end < start) {
+        return null;
+      }
+
+      if (startDate === endDate) {
+        return 1;
+      }
+
+      const differenceMs = end.getTime() - start.getTime();
+      return Math.round(differenceMs / (1000 * 60 * 60 * 24));
+    }
+
+    function syncDaysOutsideField() {
+      if (elements.ajustarDiasManual.checked) {
+        elements.diasFuera.readOnly = false;
+        return parseIntegerValue(elements.diasFuera);
+      }
+
+      elements.diasFuera.readOnly = true;
+      const automaticDays = calculateDaysOutside(elements.fechaInicioServicio.value, elements.fechaTerminoServicio.value);
+      elements.diasFuera.value = automaticDays && automaticDays > 0 ? String(automaticDays) : "";
+      return automaticDays;
+    }
+
     function formatMoney(amount) {
       return `${moneyFormatter.format(amount)} MXN`;
     }
@@ -820,6 +885,15 @@
       }
 
       return `${hours} h ${remainingMinutes} min`;
+    }
+
+    function toMinutesSinceMidnight(timeValue) {
+      if (!timeValue) {
+        return null;
+      }
+
+      const [hours, minutes] = timeValue.split(":").map((value) => Number.parseInt(value, 10));
+      return (hours * 60) + minutes;
     }
 
     function setStatus(message, type = "") {
@@ -898,6 +972,8 @@
     }
 
     function readForm() {
+      syncDaysOutsideField();
+
       return {
         quotedBy: elements.cotizaNombre.value.trim(),
         quotedFor: elements.clienteNombre.value.trim(),
@@ -916,6 +992,8 @@
         marginPercent: parseNumericValue(elements.margen),
         operatorDailyWage: parseNumericValue(elements.sueldoOperador),
         daysOutside: parseIntegerValue(elements.diasFuera),
+        manualDaysAdjustment: elements.ajustarDiasManual.checked,
+        unitDailyFixedCost: parseNumericValue(elements.costoUnidadDiario),
         departureTime: elements.horaSalida.value,
         returnTime: elements.horaRegreso.value,
         lodgingCost: parseNumericValue(elements.hospedaje),
@@ -1000,6 +1078,10 @@
         errors.push("El sueldo diario del operador debe ser un numero valido.");
       }
 
+      if (!Number.isFinite(form.unitDailyFixedCost) || form.unitDailyFixedCost < 0) {
+        errors.push("El costo fijo diario de la unidad debe ser un numero valido.");
+      }
+
       if (!Number.isInteger(form.daysOutside) || form.daysOutside <= 0) {
         errors.push("La cantidad de dias fuera debe ser un entero mayor a cero.");
       }
@@ -1042,6 +1124,16 @@
       return hour >= 0 && hour < 5;
     }
 
+    function returnTripRunsIntoNight(timeValue, estimatedDurationMinutes) {
+      const returnMinutes = toMinutesSinceMidnight(timeValue);
+
+      if (!Number.isFinite(returnMinutes) || !Number.isFinite(estimatedDurationMinutes) || estimatedDurationMinutes <= 0) {
+        return false;
+      }
+
+      return (returnMinutes + estimatedDurationMinutes) > (23 * 60);
+    }
+
     function buildNotes(form, nightSurcharge) {
       const notes = [];
 
@@ -1082,10 +1174,14 @@
       }) * 2;
       const fuelCost = (totalDistanceKm / form.fuelEfficiency) * form.fuelPrice;
       const operatorBaseCost = form.operatorDailyWage * form.daysOutside;
-      const hasNightSurcharge = isDepartureNight(form.departureTime) || isReturnNight(form.returnTime);
+      const unitOutsideCost = form.unitDailyFixedCost * form.daysOutside;
+      const hasNightSurcharge =
+        isDepartureNight(form.departureTime) ||
+        isReturnNight(form.returnTime) ||
+        returnTripRunsIntoNight(form.returnTime, estimatedDurationMinutes);
       const nightSurcharge = hasNightSurcharge ? APP_CONFIG.nightSurchargeMxN : 0;
       const lodgingCost = form.daysOutside > 1 ? form.lodgingCost : 0;
-      const totalTripCost = fuelCost + tollsTotal + operatorBaseCost + nightSurcharge + form.otherExpenses + lodgingCost;
+      const totalTripCost = fuelCost + tollsTotal + operatorBaseCost + nightSurcharge + form.otherExpenses + lodgingCost + unitOutsideCost;
       const suggestedPrice = totalTripCost * (1 + (form.marginPercent / 100));
 
       return {
@@ -1099,6 +1195,8 @@
         operatorDailyWage: form.operatorDailyWage,
         daysOutside: form.daysOutside,
         operatorBaseCost,
+        unitDailyFixedCost: form.unitDailyFixedCost,
+        unitOutsideCost,
         nightSurcharge,
         otherExpenses: form.otherExpenses,
         lodgingCost,
@@ -1127,9 +1225,10 @@
       outputs.tiempoEstimado.textContent = formatDuration(calculation.estimatedDurationMinutes);
       outputs.gasolina.textContent = formatMoney(calculation.fuelCost);
       outputs.peajes.textContent = formatMoney(calculation.tollsTotal);
-      outputs.sueldoBase.textContent = formatMoney(calculation.operatorDailyWage);
       outputs.diasFuera.textContent = String(calculation.daysOutside);
       outputs.costoOperador.textContent = formatMoney(calculation.operatorBaseCost);
+      outputs.costoUnidadDiario.textContent = formatMoney(calculation.unitDailyFixedCost);
+      outputs.costoUnidadFuera.textContent = formatMoney(calculation.unitOutsideCost);
       outputs.recargoNocturno.textContent = formatMoney(calculation.nightSurcharge);
       outputs.otrosGastos.textContent = formatMoney(calculation.otherExpenses);
       outputs.hospedaje.textContent = formatMoney(calculation.lodgingCost);
@@ -1160,6 +1259,8 @@
         operatorDailyWage: Number.isFinite(form.operatorDailyWage) ? form.operatorDailyWage : 0,
         daysOutside: Number.isInteger(form.daysOutside) && form.daysOutside > 0 ? form.daysOutside : 0,
         operatorBaseCost: 0,
+        unitDailyFixedCost: Number.isFinite(form.unitDailyFixedCost) ? form.unitDailyFixedCost : 0,
+        unitOutsideCost: 0,
         nightSurcharge: 0,
         otherExpenses: Number.isFinite(form.otherExpenses) ? form.otherExpenses : 0,
         lodgingCost: Number.isFinite(form.lodgingCost) ? form.lodgingCost : 0,
@@ -1189,6 +1290,7 @@
         marginPercent: Number.isFinite(form.marginPercent) ? form.marginPercent : 0,
         operatorDailyWage: Number.isFinite(form.operatorDailyWage) ? form.operatorDailyWage : 0,
         daysOutside: Number.isInteger(form.daysOutside) && form.daysOutside > 0 ? form.daysOutside : 1,
+        unitDailyFixedCost: Number.isFinite(form.unitDailyFixedCost) ? form.unitDailyFixedCost : 0,
         lodgingCost: Number.isFinite(form.lodgingCost) ? form.lodgingCost : 0,
       };
     }
@@ -1256,6 +1358,15 @@
 
       if (!form.origin || !form.destination) {
         routeErrors.push("Ingresa origen y destino para calcular la ruta.");
+      }
+
+      if (form.serviceStartDate && form.serviceEndDate) {
+        const startDate = parseDateValue(form.serviceStartDate);
+        const endDate = parseDateValue(form.serviceEndDate);
+
+        if (endDate < startDate) {
+          routeErrors.push("La fecha de termino del servicio no puede ser anterior a la fecha de inicio.");
+        }
       }
 
       if (form.scales.some((scale) => !scale)) {
@@ -1369,8 +1480,12 @@
     }
 
     function handleInputChange(event) {
-      if (event.target.id === "diasFuera") {
-        toggleHospedajeField(parseIntegerValue(elements.diasFuera));
+      syncDaysOutsideField();
+      toggleHospedajeField(parseIntegerValue(elements.diasFuera));
+
+      if (event.target.id === "ajustarDiasManual") {
+        refreshQuote();
+        return;
       }
 
       if (
@@ -1398,18 +1513,22 @@
       elements.tipoServicio.selectedIndex = 0;
       elements.vehiculo.selectedIndex = 0;
       elements.gasolina.value = "24.50";
-      elements.rendimiento.value = "8";
+      elements.rendimiento.value = "6";
       elements.peajes.value = "0";
       elements.otrosGastos.value = "0";
       elements.margen.value = "30";
       elements.sueldoOperador.value = "900";
+      elements.ajustarDiasManual.checked = false;
+      elements.costoUnidadDiario.value = "0";
       elements.diasFuera.value = "1";
       elements.horaSalida.value = "08:00";
       elements.horaRegreso.value = "18:00";
       elements.hospedaje.value = "0";
       elements.observaciones.value = "";
+      syncDaysOutsideField();
       toggleHospedajeField(1);
       lastBaseRouteDistanceKm = 0;
+      lastEstimatedDurationMinutes = 0;
       lastRouteKey = "";
       setStatus("Campos restablecidos.");
       refreshQuote();
@@ -1498,6 +1617,8 @@
       elements.margen,
       elements.sueldoOperador,
       elements.diasFuera,
+      elements.ajustarDiasManual,
+      elements.costoUnidadDiario,
       elements.horaSalida,
       elements.horaRegreso,
       elements.hospedaje,
@@ -1512,6 +1633,9 @@
     elements.fechaCotizacion.value = todayAsInputValue();
     elements.fechaInicioServicio.value = todayAsInputValue();
     elements.fechaTerminoServicio.value = todayAsInputValue();
+    elements.rendimiento.value = "6";
+    elements.diasFuera.value = "1";
+    syncDaysOutsideField();
     toggleHospedajeField(1);
     renderNotes([
       "Esta cotizacion incluye el retorno operativo de la unidad.",
