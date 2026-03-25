@@ -556,6 +556,7 @@
         </section>
 
         <div class="actions">
+          <button id="calcularRuta" class="primary" type="button">Calcular ruta</button>
           <button id="calcular" class="primary" type="button">Actualizar cotizacion</button>
           <button id="imprimir" class="secondary" type="button">Imprimir cotizacion</button>
           <button id="limpiar" class="ghost" type="button">Limpiar</button>
@@ -591,10 +592,11 @@
         </div>
 
         <dl class="detail-list">
-          <div class="detail-row"><dt>Distancia total de ruta base</dt><dd id="distanciaBaseResultado">0.0 km</dd></div>
+          <div class="detail-row"><dt>Distancia de ida</dt><dd id="distanciaBaseResultado">0.0 km</dd></div>
           <div class="detail-row"><dt>Distancia operativa (ida y vuelta)</dt><dd id="distanciaOperativaResultado">0.0 km</dd></div>
           <div class="detail-row"><dt>Ajuste operativo</dt><dd id="ajusteOperativoResultado">50.0 km</dd></div>
           <div class="detail-row"><dt>Distancia total final utilizada</dt><dd id="distanciaTotalResultado">50.0 km</dd></div>
+          <div class="detail-row"><dt>Tiempo estimado</dt><dd id="tiempoEstimadoResultado">0 min</dd></div>
           <div class="detail-row"><dt>Costo de gasolina</dt><dd id="gasolinaResultado">$0.00 MXN</dd></div>
           <div class="detail-row"><dt>Peajes totales</dt><dd id="peajesResultado">$0.00 MXN</dd></div>
           <div class="detail-row"><dt>Sueldo base del operador</dt><dd id="sueldoBaseResultado">$0.00 MXN</dd></div>
@@ -690,6 +692,7 @@
       hospedajeField: $("#hospedajeField"),
       hospedaje: $("#hospedaje"),
       observaciones: $("#observaciones"),
+      calcularRuta: $("#calcularRuta"),
       calcular: $("#calcular"),
       imprimir: $("#imprimir"),
       limpiar: $("#limpiar"),
@@ -712,6 +715,7 @@
       distanciaOperativa: $("#distanciaOperativaResultado"),
       ajusteOperativo: $("#ajusteOperativoResultado"),
       distanciaTotal: $("#distanciaTotalResultado"),
+      tiempoEstimado: $("#tiempoEstimadoResultado"),
       gasolina: $("#gasolinaResultado"),
       peajes: $("#peajesResultado"),
       sueldoBase: $("#sueldoBaseResultado"),
@@ -747,13 +751,13 @@
       nightSurchargeMxN: 500,
     };
 
+    const GOOGLE_MAPS_API_KEY = "AIzaSyA8R_I0AXcLBZ_8hTXdruUgQ-NC4IrzusA";
+
     const routeCache = new Map();
-    const geocodeCache = new Map();
-    const segmentCache = new Map();
     let lastBaseRouteDistanceKm = 0;
+    let lastEstimatedDurationMinutes = 0;
     let lastRouteKey = "";
-    let routeRequestToken = 0;
-    let routeDebounceTimer = null;
+    let googleMapsLoadPromise = null;
 
     const moneyFormatter = new Intl.NumberFormat("es-MX", {
       style: "currency",
@@ -796,6 +800,26 @@
 
     function formatPercent(value) {
       return `${decimalFormatter.format(value)}%`;
+    }
+
+    function formatDuration(minutes) {
+      if (!Number.isFinite(minutes) || minutes <= 0) {
+        return "0 min";
+      }
+
+      const roundedMinutes = Math.round(minutes);
+      const hours = Math.floor(roundedMinutes / 60);
+      const remainingMinutes = roundedMinutes % 60;
+
+      if (hours === 0) {
+        return `${remainingMinutes} min`;
+      }
+
+      if (remainingMinutes === 0) {
+        return `${hours} h`;
+      }
+
+      return `${hours} h ${remainingMinutes} min`;
     }
 
     function setStatus(message, type = "") {
@@ -1047,7 +1071,7 @@
       return manualTolls;
     }
 
-    function calculateQuoteModel(form, baseRouteDistanceKm) {
+    function calculateQuoteModel(form, baseRouteDistanceKm, estimatedDurationMinutes = 0) {
       const operationalDistanceKm = baseRouteDistanceKm * 2;
       const adjustmentKm = APP_CONFIG.operationalAdjustmentKm;
       const totalDistanceKm = operationalDistanceKm + adjustmentKm;
@@ -1069,6 +1093,7 @@
         operationalDistanceKm,
         adjustmentKm,
         totalDistanceKm,
+        estimatedDurationMinutes,
         fuelCost,
         tollsTotal,
         operatorDailyWage: form.operatorDailyWage,
@@ -1099,6 +1124,7 @@
       outputs.distanciaOperativa.textContent = formatDistance(calculation.operationalDistanceKm);
       outputs.ajusteOperativo.textContent = formatDistance(calculation.adjustmentKm);
       outputs.distanciaTotal.textContent = formatDistance(calculation.totalDistanceKm);
+      outputs.tiempoEstimado.textContent = formatDuration(calculation.estimatedDurationMinutes);
       outputs.gasolina.textContent = formatMoney(calculation.fuelCost);
       outputs.peajes.textContent = formatMoney(calculation.tollsTotal);
       outputs.sueldoBase.textContent = formatMoney(calculation.operatorDailyWage);
@@ -1128,6 +1154,7 @@
         operationalDistanceKm: 0,
         adjustmentKm: APP_CONFIG.operationalAdjustmentKm,
         totalDistanceKm: 0,
+        estimatedDurationMinutes: 0,
         fuelCost: 0,
         tollsTotal: 0,
         operatorDailyWage: Number.isFinite(form.operatorDailyWage) ? form.operatorDailyWage : 0,
@@ -1144,100 +1171,162 @@
       updateCalculationOutputs(form, emptyCalculation);
     }
 
-    async function geocodeAddress(address) {
-      const normalizedAddress = address.trim().toLowerCase();
+    function invalidateCalculatedRoute(form, statusMessage = "La ruta cambio. Haz clic en Calcular ruta para actualizar distancia y tiempo.") {
+      lastBaseRouteDistanceKm = 0;
+      lastEstimatedDurationMinutes = 0;
+      lastRouteKey = "";
+      resetOutputs(form);
+      setStatus(statusMessage);
+    }
 
-      if (geocodeCache.has(normalizedAddress)) {
-        return geocodeCache.get(normalizedAddress);
-      }
-
-      const response = await fetch(`https://nominatim.openstreetmap.org/search?format=jsonv2&limit=1&q=${encodeURIComponent(address)}`);
-
-      if (!response.ok) {
-        throw new Error("No se pudo consultar la ubicacion.");
-      }
-
-      const data = await response.json();
-
-      if (!data.length) {
-        throw new Error(`No se encontro una ubicacion para: ${address}`);
-      }
-
-      const coordinates = {
-        lat: Number(data[0].lat),
-        lon: Number(data[0].lon),
+    function getSafePreviewForm(form) {
+      return {
+        ...form,
+        fuelPrice: Number.isFinite(form.fuelPrice) ? form.fuelPrice : 0,
+        fuelEfficiency: Number.isFinite(form.fuelEfficiency) && form.fuelEfficiency > 0 ? form.fuelEfficiency : 1,
+        tollsPerTrip: Number.isFinite(form.tollsPerTrip) ? form.tollsPerTrip : 0,
+        otherExpenses: Number.isFinite(form.otherExpenses) ? form.otherExpenses : 0,
+        marginPercent: Number.isFinite(form.marginPercent) ? form.marginPercent : 0,
+        operatorDailyWage: Number.isFinite(form.operatorDailyWage) ? form.operatorDailyWage : 0,
+        daysOutside: Number.isInteger(form.daysOutside) && form.daysOutside > 0 ? form.daysOutside : 1,
+        lodgingCost: Number.isFinite(form.lodgingCost) ? form.lodgingCost : 0,
       };
-      geocodeCache.set(normalizedAddress, coordinates);
-      return coordinates;
     }
 
-    async function getRouteDistanceKm(originCoords, destinationCoords) {
-      const response = await fetch(`https://router.project-osrm.org/route/v1/driving/${originCoords.lon},${originCoords.lat};${destinationCoords.lon},${destinationCoords.lat}?overview=false`);
+    function getFriendlyGoogleRouteError(error) {
+      const rawMessage = String(error?.message || error || "");
+      const normalizedMessage = rawMessage.toUpperCase();
 
-      if (!response.ok) {
-        throw new Error("No se pudo calcular la ruta.");
+      if (normalizedMessage.includes("ZERO_RESULTS") || normalizedMessage.includes("NO ROUTES")) {
+        return "Google Maps no encontro una ruta para los puntos capturados. Revisa las direcciones e intentalo de nuevo.";
       }
 
-      const data = await response.json();
-
-      if (!data.routes || !data.routes.length) {
-        throw new Error("No se encontro una ruta entre origen y destino.");
+      if (normalizedMessage.includes("REQUEST_DENIED") || normalizedMessage.includes("API KEY")) {
+        return "No fue posible consultar Google Maps. Revisa la configuracion o restricciones de la API key.";
       }
 
-      return data.routes[0].distance / 1000;
+      if (normalizedMessage.includes("OVER_QUERY_LIMIT") || normalizedMessage.includes("RESOURCE_EXHAUSTED")) {
+        return "Google Maps alcanzo el limite temporal de consultas. Espera un momento e intenta nuevamente.";
+      }
+
+      return "No fue posible calcular la ruta con Google Maps en este momento. Verifica los puntos e intenta nuevamente.";
     }
 
-    async function getSegmentDistanceKm(startAddress, endAddress) {
-      const segmentKey = normalizeAddressKey(startAddress, endAddress);
-
-      if (segmentCache.has(segmentKey)) {
-        return segmentCache.get(segmentKey);
+    async function loadGoogleMapsApi() {
+      if (window.google?.maps?.importLibrary) {
+        return window.google.maps;
       }
 
-      const [originCoords, destinationCoords] = await Promise.all([
-        geocodeAddress(startAddress),
-        geocodeAddress(endAddress),
-      ]);
+      if (!googleMapsLoadPromise) {
+        googleMapsLoadPromise = new Promise((resolve, reject) => {
+          const callbackName = "__initGoogleMapsCotizador";
+          window[callbackName] = () => {
+            delete window[callbackName];
+            resolve(window.google.maps);
+          };
 
-      const distanceKm = await getRouteDistanceKm(originCoords, destinationCoords);
-      segmentCache.set(segmentKey, distanceKm);
-      return distanceKm;
+          const script = document.createElement("script");
+          script.src = `https://maps.googleapis.com/maps/api/js?key=${GOOGLE_MAPS_API_KEY}&loading=async&libraries=routes&callback=${callbackName}&v=weekly&language=es&region=MX`;
+          script.async = true;
+          script.defer = true;
+          script.onerror = () => reject(new Error("No se pudo cargar Google Maps."));
+          document.head.appendChild(script);
+        });
+      }
+
+      return googleMapsLoadPromise;
     }
 
-    async function resolveBaseRouteDistance(form, options = {}) {
+    function buildGoogleDepartureDate(form) {
+      if (!form.serviceStartDate || !form.departureTime) {
+        return undefined;
+      }
+
+      const departureDate = new Date(`${form.serviceStartDate}T${form.departureTime}:00`);
+
+      if (Number.isNaN(departureDate.getTime())) {
+        return undefined;
+      }
+
+      return departureDate > new Date() ? departureDate : undefined;
+    }
+
+    async function calculateRouteWithGoogle(form, options = {}) {
+      const routeErrors = [];
+
+      if (!form.origin || !form.destination) {
+        routeErrors.push("Ingresa origen y destino para calcular la ruta.");
+      }
+
+      if (form.scales.some((scale) => !scale)) {
+        routeErrors.push("Completa o elimina las escalas vacias antes de calcular la ruta.");
+      }
+
+      if (routeErrors.length) {
+        setStatus(routeErrors[0], "error");
+        resetOutputs(form);
+        return false;
+      }
+
       const points = buildRoutePoints(form);
       const routeKey = buildRouteKey(points);
 
-      if (!options.force && routeKey === lastRouteKey && lastBaseRouteDistanceKm > 0) {
-        return lastBaseRouteDistanceKm;
-      }
-
       if (!options.force && routeCache.has(routeKey)) {
-        lastBaseRouteDistanceKm = routeCache.get(routeKey);
+        const cachedRoute = routeCache.get(routeKey);
+        lastBaseRouteDistanceKm = cachedRoute.baseRouteDistanceKm;
+        lastEstimatedDurationMinutes = cachedRoute.estimatedDurationMinutes;
         lastRouteKey = routeKey;
-        return lastBaseRouteDistanceKm;
+        return true;
       }
 
-      const currentToken = ++routeRequestToken;
-      setStatus("Calculando distancia operativa aproximada...");
-      elements.calcular.disabled = true;
+      try {
+        setStatus("Consultando ruta con Google Maps...");
+        elements.calcularRuta.disabled = true;
 
-      const segmentPromises = [];
-      for (let index = 0; index < points.length - 1; index += 1) {
-        segmentPromises.push(getSegmentDistanceKm(points[index], points[index + 1]));
+        await loadGoogleMapsApi();
+        const { Route } = await google.maps.importLibrary("routes");
+
+        const request = {
+          origin: form.origin,
+          destination: form.destination,
+          intermediates: form.scales.map((scale) => ({ location: scale })),
+          travelMode: "DRIVING",
+          routingPreference: "TRAFFIC_AWARE",
+          fields: ["distanceMeters", "durationMillis"],
+        };
+
+        const departureDate = buildGoogleDepartureDate(form);
+        if (departureDate) {
+          request.departureTime = departureDate;
+        }
+
+        const response = await Route.computeRoutes(request);
+        const route = response.routes?.[0];
+
+        if (!route || !Number.isFinite(route.distanceMeters)) {
+          throw new Error("ZERO_RESULTS");
+        }
+
+        const routeData = {
+          baseRouteDistanceKm: route.distanceMeters / 1000,
+          estimatedDurationMinutes: Number(route.durationMillis || 0) / (1000 * 60),
+        };
+
+        routeCache.set(routeKey, routeData);
+        lastBaseRouteDistanceKm = routeData.baseRouteDistanceKm;
+        lastEstimatedDurationMinutes = routeData.estimatedDurationMinutes;
+        lastRouteKey = routeKey;
+        return true;
+      } catch (error) {
+        lastBaseRouteDistanceKm = 0;
+        lastEstimatedDurationMinutes = 0;
+        lastRouteKey = "";
+        resetOutputs(form);
+        setStatus(getFriendlyGoogleRouteError(error), "error");
+        return false;
+      } finally {
+        elements.calcularRuta.disabled = false;
       }
-
-      const segmentDistances = await Promise.all(segmentPromises);
-      const baseRouteDistanceKm = segmentDistances.reduce((total, distance) => total + distance, 0);
-
-      if (currentToken !== routeRequestToken) {
-        return null;
-      }
-
-      routeCache.set(routeKey, baseRouteDistanceKm);
-      lastBaseRouteDistanceKm = baseRouteDistanceKm;
-      lastRouteKey = routeKey;
-      return baseRouteDistanceKm;
     }
 
     async function refreshQuote(options = {}) {
@@ -1254,25 +1343,23 @@
         } else {
           setStatus(errors[0], "error");
         }
-        lastBaseRouteDistanceKm = 0;
-        lastRouteKey = "";
         resetOutputs(form);
         return false;
       }
 
       try {
-        const baseRouteDistanceKm = await resolveBaseRouteDistance(form, options);
+        const currentRouteKey = buildRouteKey(buildRoutePoints(form));
 
-        if (baseRouteDistanceKm === null) {
+        if (lastBaseRouteDistanceKm <= 0 || currentRouteKey !== lastRouteKey) {
+          setStatus("Primero calcula la ruta con Google Maps para actualizar la cotizacion.", "error");
+          resetOutputs(form);
           return false;
         }
 
-        updateCalculationOutputs(form, calculateQuoteModel(form, baseRouteDistanceKm));
+        updateCalculationOutputs(form, calculateQuoteModel(form, lastBaseRouteDistanceKm, lastEstimatedDurationMinutes));
         setStatus("Cotizacion actualizada correctamente.", "success");
         return true;
       } catch (error) {
-        lastBaseRouteDistanceKm = 0;
-        lastRouteKey = "";
         resetOutputs(form);
         setStatus(error.message || "Ocurrio un error al calcular la cotizacion.", "error");
         return false;
@@ -1281,20 +1368,19 @@
       }
     }
 
-    function scheduleRouteRefresh() {
-      clearTimeout(routeDebounceTimer);
-      routeDebounceTimer = setTimeout(() => {
-        refreshQuote({ force: true });
-      }, 650);
-    }
-
     function handleInputChange(event) {
       if (event.target.id === "diasFuera") {
         toggleHospedajeField(parseIntegerValue(elements.diasFuera));
       }
 
-      if (event.target.id === "origen" || event.target.id === "destino" || event.target.classList.contains("scale-input")) {
-        scheduleRouteRefresh();
+      if (
+        event.target.id === "origen" ||
+        event.target.id === "destino" ||
+        event.target.id === "fechaInicioServicio" ||
+        event.target.id === "horaSalida" ||
+        event.target.classList.contains("scale-input")
+      ) {
+        invalidateCalculatedRoute(readForm());
         return;
       }
       refreshQuote();
@@ -1335,14 +1421,34 @@
       updatePrintMeta(form);
 
       if (lastBaseRouteDistanceKm > 0) {
-        updateCalculationOutputs(form, calculateQuoteModel(form, lastBaseRouteDistanceKm));
+        updateCalculationOutputs(form, calculateQuoteModel(form, lastBaseRouteDistanceKm, lastEstimatedDurationMinutes));
       } else {
         resetOutputs(form);
       }
     }
 
+    elements.calcularRuta.addEventListener("click", async () => {
+      const form = readForm();
+      const routeCalculated = await calculateRouteWithGoogle(form, { force: true });
+
+      if (!routeCalculated) {
+        return;
+      }
+
+      const calculationErrors = validateForm(form);
+      const previewForm = calculationErrors.length ? getSafePreviewForm(form) : form;
+      updateCalculationOutputs(previewForm, calculateQuoteModel(previewForm, lastBaseRouteDistanceKm, lastEstimatedDurationMinutes));
+      setStatus("Ruta calculada correctamente con Google Maps.", "success");
+    });
     elements.calcular.addEventListener("click", () => refreshQuote({ force: true }));
     elements.imprimir.addEventListener("click", async () => {
+      const form = readForm();
+
+      if (lastBaseRouteDistanceKm <= 0 || buildRouteKey(buildRoutePoints(form)) !== lastRouteKey) {
+        setStatus("Primero calcula la ruta con Google Maps antes de imprimir.", "error");
+        return;
+      }
+
       const isValidQuote = await refreshQuote({ force: true });
 
       if (!isValidQuote || lastBaseRouteDistanceKm <= 0) {
@@ -1361,7 +1467,7 @@
     elements.escalasContainer.addEventListener("click", (event) => {
       if (event.target.classList.contains("scale-remove")) {
         removeScaleItem(event.target);
-        scheduleRouteRefresh();
+        invalidateCalculatedRoute(readForm());
       }
     });
     elements.escalasContainer.addEventListener("input", (event) => {
